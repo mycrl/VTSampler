@@ -17,7 +17,7 @@ Furthermore, future plans also include supporting native textures from certain g
 ## Example
 
 ```rust
-use vtsample::{VTFormat, VTSamplerBuilder};
+use vtsampler::{VTFormat, VTSamplerBuilder};
 
 let sampler = VTSamplerBuilder::default().build().await?;
 
