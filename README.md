@@ -1,6 +1,7 @@
 # VTSampler
 
-A pure Rust implementation similar to ID3D11VideoProcessor, but cross-platform and cross-graphics API.
+A pure Rust implementation similar to ID3D11VideoProcessor, but cross-platform and cross-graphics API, with all tasks executed on the GPU, which is very fast!
+> ID3D11VideoProcessor is an implementation that handles tasks such as color space conversion and texture scaling, specifically designed for video stream-related tasks.
 
 ---
 
