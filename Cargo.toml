@@ -4,8 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wgpu = "25.0.2"
+wgpu = "23"
 smallvec = "1.15.1"
+minijinja = "2.8.0"
+thiserror = "2.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-foundation = "0.3"
+objc2-core-video = "0.3"
+objc2-metal = "0.3"
+metal = "0.29"
+block2 = "0.6"
 
 [dev-dependencies]
 winit = "0.30.11"

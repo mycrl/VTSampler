@@ -3,7 +3,7 @@ use std::{borrow::Cow, process::Command, sync::Arc};
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use vtsampler::{
-    PixelData, VTFormat, VTSamplerBuilder,
+    PixelData, VTFormat, VTImage, VTProcessOptions, VTSamplerBuilder,
     wgpu::{
         util::{BufferInitDescriptor, DeviceExt},
         *,
@@ -26,9 +26,7 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = event_loop
-            .create_window(
-                WindowAttributes::default().with_inner_size(PhysicalSize::new(600, 800)),
-            )
+            .create_window(WindowAttributes::default().with_inner_size(PhysicalSize::new(600, 800)))
             .unwrap();
 
         let output = Command::new("ffmpeg")
@@ -54,11 +52,8 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        match event {
-            WindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
-            _ => {}
+        if matches!(event, WindowEvent::CloseRequested) {
+            event_loop.exit();
         }
     }
 }
@@ -116,29 +111,33 @@ impl Vertex {
 async fn render_texture(width: u32, height: u32, buffer: &[u8], window: &Window) -> Result<()> {
     let window_size = window.inner_size();
 
-    let instance = Instance::new(&InstanceDescriptor::default());
+    let instance = Instance::new(InstanceDescriptor::default());
     let surface = instance.create_surface(window)?;
     let adapter = instance
         .request_adapter(&RequestAdapterOptions {
             power_preference: PowerPreference::LowPower,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-            ..Default::default()
         })
-        .await?;
+        .await
+        .ok_or_else(|| anyhow::anyhow!("no suitable GPU adapter"))?;
 
     let (device, queue) = adapter
-        .request_device(&DeviceDescriptor {
-            memory_hints: MemoryHints::MemoryUsage,
-            required_features: adapter.features(),
-            required_limits: adapter.limits(),
-            ..Default::default()
-        })
+        .request_device(
+            &DeviceDescriptor {
+                memory_hints: MemoryHints::MemoryUsage,
+                required_features: adapter.features(),
+                required_limits: adapter.limits(),
+                ..Default::default()
+            },
+            None,
+        )
         .await?;
 
     let device = Arc::new(device);
     let queue = Arc::new(queue);
 
+    let surface_format;
     {
         let mut config = surface
             .get_default_config(&adapter, window_size.width, window_size.height)
@@ -147,35 +146,48 @@ async fn render_texture(width: u32, height: u32, buffer: &[u8], window: &Window)
         config.present_mode = PresentMode::Immediate;
         config.format = TextureFormat::Bgra8Unorm;
         config.alpha_mode = CompositeAlphaMode::Opaque;
-        config.usage = TextureUsages::RENDER_ATTACHMENT;
+        config.usage = TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_DST;
+        surface_format = config.format;
         surface.configure(&device, &config);
     }
 
-    let output_texture = device.create_texture(&TextureDescriptor {
-        label: None,
+    let display_texture = device.create_texture(&TextureDescriptor {
+        label: Some("display"),
         mip_level_count: 1,
         sample_count: 1,
         dimension: TextureDimension::D2,
-        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::STORAGE_BINDING,
+        usage: TextureUsages::TEXTURE_BINDING
+            | TextureUsages::STORAGE_BINDING
+            | TextureUsages::COPY_DST,
         format: TextureFormat::Bgra8Unorm,
         view_formats: &[],
         size: Extent3d {
-            depth_or_array_layers: 1,
             width: window_size.width,
             height: window_size.height,
+            depth_or_array_layers: 1,
         },
     });
 
-    conversion(
-        device.clone(),
-        queue.clone(),
-        width as usize,
-        height as usize,
-        buffer,
-        &output_texture,
-        window_size,
-    )
-    .await?;
+    let pixel = PixelData::YUV420P {
+        buffer: [
+            &buffer[..(width as usize * height as usize)],
+            &buffer[(width as usize * height as usize)
+                ..(width as usize * height as usize + width as usize / 2 * height as usize / 2)],
+            &buffer
+                [(width as usize * height as usize + width as usize / 2 * height as usize / 2)..],
+        ],
+        stride: [width as usize, width as usize / 2, width as usize / 2],
+    };
+
+    let mut sampler = VTSamplerBuilder::default()
+        .with_arc_device(device.clone(), queue.clone())
+        .build()
+        .await?;
+
+    let input = VTImage::from_cpu(&pixel, width, height);
+    let output = VTImage::from_render_target(&display_texture, VTFormat::BGRA);
+
+    sampler.process(&input, &output, VTProcessOptions::default())?;
 
     let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: None,
@@ -189,13 +201,13 @@ async fn render_texture(width: u32, height: u32, buffer: &[u8], window: &Window)
         usage: BufferUsages::INDEX,
     });
 
-    let sampler = device.create_sampler(&SamplerDescriptor {
+    let wgpu_sampler = device.create_sampler(&SamplerDescriptor {
         address_mode_u: AddressMode::ClampToEdge,
         address_mode_v: AddressMode::ClampToEdge,
         address_mode_w: AddressMode::ClampToEdge,
-        mipmap_filter: FilterMode::Nearest,
-        mag_filter: FilterMode::Nearest,
-        min_filter: FilterMode::Nearest,
+        mipmap_filter: FilterMode::Linear,
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
         ..Default::default()
     });
 
@@ -221,7 +233,7 @@ async fn render_texture(width: u32, height: u32, buffer: &[u8], window: &Window)
         ],
     });
 
-    let texture_view = output_texture.create_view(&TextureViewDescriptor {
+    let texture_view = display_texture.create_view(&TextureViewDescriptor {
         dimension: Some(TextureViewDimension::D2),
         format: Some(TextureFormat::Bgra8Unorm),
         aspect: TextureAspect::All,
@@ -238,81 +250,75 @@ async fn render_texture(width: u32, height: u32, buffer: &[u8], window: &Window)
             },
             BindGroupEntry {
                 binding: 1,
-                resource: BindingResource::Sampler(&sampler),
+                resource: BindingResource::Sampler(&wgpu_sampler),
             },
         ],
     });
 
-    let pipeline =
-        device
-            .create_render_pipeline(&RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        })),
+        vertex: VertexState {
+            entry_point: Some("main"),
+            module: &device.create_shader_module(ShaderModuleDescriptor {
                 label: None,
-                layout: Some(&device.create_pipeline_layout(
-                    &PipelineLayoutDescriptor {
-                        label: None,
-                        bind_group_layouts: &[&bind_group_layout],
-                        push_constant_ranges: &[],
-                    },
+                source: ShaderSource::Wgsl(Cow::Borrowed(
+                    r#"
+                    struct VertexOutput {
+                        @builtin(position) position: vec4<f32>,
+                        @location(0) coords: vec2<f32>,
+                    };
+                    @vertex fn main(@location(0) position: vec2<f32>, @location(1) coords: vec2<f32>) -> VertexOutput {
+                        var output: VertexOutput;
+                        output.position = vec4<f32>(position, 0.0, 1.0);
+                        output.coords = vec2<f32>(coords.x, 1.0 - coords.y);
+                        return output;
+                    }
+                "#,
                 )),
-                vertex: VertexState {
-                    entry_point: Some("main"),
-                    module: &device
-                        .create_shader_module(ShaderModuleDescriptor {
-                            label: None,
-                            source: ShaderSource::Wgsl(Cow::Borrowed(r#"
-                                struct VertexOutput {
-                                    @builtin(position) position: vec4<f32>,
-                                    @location(0) coords: vec2<f32>,
-                                };
-
-                                @vertex fn main(@location(0) position: vec2<f32>, @location(1) coords: vec2<f32>) -> VertexOutput {
-                                    var output: VertexOutput;
-                                    output.position = vec4<f32>(position, 0.0, 1.0);
-                                    output.coords = vec2<f32>(coords.x, 1.0 - coords.y);
-                                    return output;
-                                }
-                            "#)),
-                        }),
-                    compilation_options: PipelineCompilationOptions::default(),
-                    buffers: &[Vertex::desc()],
-                },
-                fragment: Some(FragmentState {
-                    entry_point: Some("main"),
-                    module: &device.create_shader_module(ShaderModuleDescriptor {
-                        label: None,
-                        source: ShaderSource::Wgsl(Cow::Borrowed(r#"
-                            @group(0) @binding(0) var texture_: texture_2d<f32>;
-                            @group(0) @binding(1) var sampler_: sampler;
-
-                            @fragment fn main(@location(0) coords: vec2<f32>) -> @location(0) vec4<f32> {
-                                return textureSample(texture_, sampler_, coords);
-                            }
-                        "#)),
-                    }),
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(ColorTargetState {
-                        blend: Some(BlendState::REPLACE),
-                        write_mask: ColorWrites::ALL,
-                        format: TextureFormat::Bgra8Unorm,
-                    })],
-                }),
-                primitive: PrimitiveState {
-                    topology: PrimitiveTopology::TriangleStrip,
-                    strip_index_format: Some(IndexFormat::Uint16),
-                    ..Default::default()
-                },
-                multisample: MultisampleState::default(),
-                depth_stencil: None,
-                multiview: None,
-                cache: None,
-            });
+            }),
+            compilation_options: PipelineCompilationOptions::default(),
+            buffers: &[Vertex::desc()],
+        },
+        fragment: Some(FragmentState {
+            entry_point: Some("main"),
+            module: &device.create_shader_module(ShaderModuleDescriptor {
+                label: None,
+                source: ShaderSource::Wgsl(Cow::Borrowed(
+                    r#"
+                    @group(0) @binding(0) var texture_: texture_2d<f32>;
+                    @group(0) @binding(1) var sampler_: sampler;
+                    @fragment fn main(@location(0) coords: vec2<f32>) -> @location(0) vec4<f32> {
+                        return textureSample(texture_, sampler_, coords);
+                    }
+                "#,
+                )),
+            }),
+            compilation_options: PipelineCompilationOptions::default(),
+            targets: &[Some(ColorTargetState {
+                blend: Some(BlendState::REPLACE),
+                write_mask: ColorWrites::ALL,
+                format: surface_format,
+            })],
+        }),
+        primitive: PrimitiveState {
+            topology: PrimitiveTopology::TriangleStrip,
+            strip_index_format: Some(IndexFormat::Uint16),
+            ..Default::default()
+        },
+        multisample: MultisampleState::default(),
+        depth_stencil: None,
+        multiview: None,
+        cache: None,
+    });
 
     let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor { label: None });
-
-    let output = surface.get_current_texture()?;
-    let view = output
-        .texture
-        .create_view(&TextureViewDescriptor::default());
+    let frame = surface.get_current_texture()?;
+    let view = frame.texture.create_view(&TextureViewDescriptor::default());
 
     {
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -326,7 +332,6 @@ async fn render_texture(width: u32, height: u32, buffer: &[u8], window: &Window)
             })],
             ..Default::default()
         });
-
         render_pass.set_pipeline(&pipeline);
         render_pass.set_bind_group(0, Some(&bind_group), &[]);
         render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
@@ -335,57 +340,7 @@ async fn render_texture(width: u32, height: u32, buffer: &[u8], window: &Window)
     }
 
     queue.submit(Some(encoder.finish()));
-    output.present();
+    frame.present();
 
-    Ok(())
-}
-
-async fn conversion(
-    device: Arc<Device>,
-    queue: Arc<Queue>,
-    width: usize,
-    height: usize,
-    buffer: &[u8],
-    output_texture: &Texture,
-    output_size: PhysicalSize<u32>,
-) -> Result<()> {
-    let sampler = VTSamplerBuilder::default()
-        .with_device(&device, &queue)
-        .build()
-        .await?;
-
-    let yuv420p_texture =
-        sampler.create_pixel_buffer(VTFormat::YUV420P, width as u32, height as u32);
-
-    let nv12_texture =
-        sampler.create_pixel_buffer(VTFormat::NV12, output_size.width, output_size.height);
-
-    let rgba_texture = device.create_texture(&TextureDescriptor {
-        label: None,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: TextureDimension::D2,
-        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::STORAGE_BINDING,
-        format: TextureFormat::Rgba8Unorm,
-        view_formats: &[],
-        size: Extent3d {
-            depth_or_array_layers: 1,
-            width: output_size.width,
-            height: output_size.height,
-        },
-    });
-
-    yuv420p_texture.write(&PixelData::YUV420P {
-        buffer: [
-            &buffer[..(width * height)],
-            &buffer[(width * height)..((width * height) + (width / 2 * height / 2))],
-            &buffer[((width * height) + (width / 2 * height / 2))..],
-        ],
-        stride: [width, width / 2, width / 2],
-    });
-
-    sampler.create_task(&yuv420p_texture, &nv12_texture).run();
-    sampler.create_task(&nv12_texture, &rgba_texture).run();
-    sampler.create_task(&rgba_texture, output_texture).run();
     Ok(())
 }

@@ -1,0 +1,46 @@
+{# Conversion + scale compute shader (generated per format pair). #}
+{% for i in range(input_plane_count) %}
+@group(0) @binding({{ i }}) var input_{{ i }}: texture_2d<f32>;
+{% endfor %}
+{% for i in range(output_plane_count) %}
+@group(0) @binding({{ input_plane_count + i }}) var output_{{ i }}: texture_storage_2d<{{ output_storage_formats[i] }}8unorm, write>;
+{% endfor %}
+
+{% if need_scale %}
+{% if scale_filter == "bilinear" %}
+fn sample_bilinear(tex: texture_2d<f32>, coord: vec2<f32>, size: vec2<u32>) -> vec4<f32> {
+    let c = clamp(coord, vec2<f32>(0.0), vec2<f32>(size) - vec2<f32>(1.0));
+    let tl = textureLoad(tex, vec2<i32>(c), 0);
+    let tr = textureLoad(tex, vec2<i32>(c + vec2<f32>(1.0, 0.0)), 0);
+    let bl = textureLoad(tex, vec2<i32>(c + vec2<f32>(0.0, 1.0)), 0);
+    let br = textureLoad(tex, vec2<i32>(c + vec2<f32>(1.0, 1.0)), 0);
+    let f = fract(c);
+    return mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
+}
+{% endif %}
+fn map_coords(coords: vec2<i32>, input_size: vec2<u32>, output_size: vec2<u32>) -> vec2<i32> {
+{% if scale_filter == "bilinear" %}
+    let fc = vec2<f32>(coords) * (vec2<f32>(input_size) / vec2<f32>(output_size));
+    return vec2<i32>(fc);
+{% else %}
+    return vec2<i32>(
+        clamp(i32(round(f32(coords.x) * (f32(input_size.x) / f32(output_size.x)))), 0, i32(input_size.x) - 1),
+        clamp(i32(round(f32(coords.y) * (f32(input_size.y) / f32(output_size.y)))), 0, i32(input_size.y) - 1)
+    );
+{% endif %}
+}
+{% endif %}
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) position: vec3<u32>) {
+    let max_position = textureDimensions(output_0);
+    if (position.x >= max_position.x || position.y >= max_position.y) {
+        return;
+    }
+
+    let coords = vec2<i32>(position.xy);
+
+    {% include "sample_input.wgsl.jinja" %}
+    {% include "color_convert.wgsl.jinja" %}
+    {% include "store_output.wgsl.jinja" %}
+}

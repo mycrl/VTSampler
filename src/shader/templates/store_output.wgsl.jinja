@@ -1,0 +1,14 @@
+{% if output_kind == "rgba" or output_kind == "bgra" %}
+textureStore(output_0, coords, vec4<f32>(r, g, b, 1.0));
+{% elif output_kind == "nv12" or output_kind == "yuv420p" %}
+textureStore(output_0, coords, vec4<f32>(y, 0.0, 0.0, 0.0));
+if (coords.x % 2 != 0 || coords.y % 2 != 0) {
+    return;
+}
+{% if output_kind == "nv12" %}
+textureStore(output_1, coords / 2, vec4<f32>(u + 0.5, v + 0.5, 0.0, 0.0));
+{% else %}
+textureStore(output_1, coords / 2, vec4<f32>(u + 0.5, 0.0, 0.0, 0.0));
+textureStore(output_2, coords / 2, vec4<f32>(v + 0.5, 0.0, 0.0, 0.0));
+{% endif %}
+{% endif %}

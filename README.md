@@ -18,15 +18,14 @@ Furthermore, future plans also include supporting native textures from certain g
 ## Example
 
 ```rust
-use vtsampler::{VTFormat, VTSamplerBuilder};
+use vtsampler::{PixelData, VTFormat, VTImage, VTProcessOptions, VTSamplerBuilder};
 
-let sampler = VTSamplerBuilder::default().build().await?;
+let mut sampler = VTSamplerBuilder::default().build().await?;
 
-let input = sampler.create_pixel_buffer(VTFormat::NV12, 1920, 1080);
-let output = sampler.create_pixel_buffer(VTFormat::RGBA, 800, 680);
+let input = VTImage::from_cpu(&pixel_data, 1920, 1080);
+let output = VTImage::from_render_target(&gpu_texture, VTFormat::BGRA);
 
-let task = sampler.create_task(&input, &output);
-task.run();
+sampler.process(&input, &output, VTProcessOptions::default())?;
 ```
 
 ## License

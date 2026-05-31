@@ -1,0 +1,9 @@
+{% if rgb_to_yuv %}
+let y = {{ mat_y_r }} * r + {{ mat_y_g }} * g + {{ mat_y_b }} * b;
+let u = {{ mat_u_r }} * r + {{ mat_u_g }} * g + {{ mat_u_b }} * b + 0.5;
+let v = {{ mat_v_r }} * r + {{ mat_v_g }} * g + {{ mat_v_b }} * b + 0.5;
+{% elif yuv_to_rgb %}
+let r = y + {{ mat_r_v }} * v;
+let g = y + {{ mat_g_u }} * u + {{ mat_g_v }} * v;
+let b = y + {{ mat_b_u }} * u;
+{% endif %}

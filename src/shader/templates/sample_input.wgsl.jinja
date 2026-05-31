@@ -1,0 +1,43 @@
+{% if input_kind == "rgba" or input_kind == "bgra" %}
+{% if need_scale %}
+let input_size = textureDimensions(input_0);
+{% if scale_filter == "bilinear" %}
+let src = vec2<f32>(coords) * (vec2<f32>(input_size) / vec2<f32>(max_position));
+let rgba = sample_bilinear(input_0, src, input_size);
+{% else %}
+let ic = map_coords(coords, input_size, max_position);
+let rgba = textureLoad(input_0, ic, 0);
+{% endif %}
+let r = rgba.r;
+let g = rgba.g;
+let b = rgba.b;
+{% else %}
+let r = textureLoad(input_0, coords, 0).r;
+let g = textureLoad(input_0, coords, 0).g;
+let b = textureLoad(input_0, coords, 0).b;
+{% endif %}
+{% elif input_kind == "nv12" %}
+{% if need_scale %}
+let input_size = textureDimensions(input_0);
+let ic = map_coords(coords, input_size, max_position);
+let y = textureLoad(input_0, ic, 0).r;
+let uv = textureLoad(input_1, ic / 2, 0).rg;
+{% else %}
+let y = textureLoad(input_0, coords, 0).r;
+let uv = textureLoad(input_1, coords / 2, 0).rg;
+{% endif %}
+let u = uv.r - 0.5;
+let v = uv.g - 0.5;
+{% elif input_kind == "yuv420p" %}
+{% if need_scale %}
+let input_size = textureDimensions(input_0);
+let ic = map_coords(coords, input_size, max_position);
+let y = textureLoad(input_0, ic, 0).r;
+let u = textureLoad(input_1, ic / 2, 0).r - 0.5;
+let v = textureLoad(input_2, ic / 2, 0).r - 0.5;
+{% else %}
+let y = textureLoad(input_0, coords, 0).r;
+let u = textureLoad(input_1, coords / 2, 0).r - 0.5;
+let v = textureLoad(input_2, coords / 2, 0).r - 0.5;
+{% endif %}
+{% endif %}
