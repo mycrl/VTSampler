@@ -8,7 +8,7 @@ readme = "README.md"
 repository = "https://github.com/mycrl/VTSampler"
 homepage = "https://github.com/mycrl/VTSampler"
 documentation = "https://docs.rs/vtsampler"
-keywords = ["video", "wgpu", "gpu", "yuv", "nv12", "color-conversion", "scaling"]
+keywords = ["video", "wgpu", "gpu", "yuv", "nv12"]
 categories = ["graphics", "multimedia::video"]
 
 [package.metadata.docs.rs]
