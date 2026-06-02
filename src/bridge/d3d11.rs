@@ -1,4 +1,14 @@
 //! D3D11 shared textures ↔ wgpu (DX12 interop).
+//!
+//! Bridge textures are created with `D3D11_RESOURCE_MISC_SHARED` and opened in wgpu via
+//! `OpenSharedHandle`. Your [`wgpu::Device`] must use the **DX12** backend.
+//!
+//! # Typical flow
+//!
+//! 1. Create a [`VtD3d11Bridge`] (or obtain one from [`VtD3d11Pool`]).
+//! 2. [`VtD3d11Bridge::copy_from`] from capture / decoder texture.
+//! 3. [`crate::VTImage::from_d3d11_bridge`] + [`crate::VTSampler::process`].
+//! 4. [`VtD3d11Bridge::copy_to`] into an encoder-facing D3D11 texture if needed.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -24,25 +34,35 @@ use wgpu::{
 
 use crate::{VTFormat, bridge::BridgeError};
 
-/// D3D11 device + immediate context used for GPU copies into bridge textures.
+/// Borrowed D3D11 device and immediate context for `CopySubresourceRegion`.
 pub struct VtD3d11Device<'a> {
+    /// D3D11 device that owns shared textures.
     pub device: &'a ID3D11Device,
+    /// Immediate context used for GPU copies.
     pub context: &'a ID3D11DeviceContext,
 }
 
 impl<'a> VtD3d11Device<'a> {
+    /// Wraps existing D3D11 device pointers (lifetime tied to the caller).
     pub fn new(device: &'a ID3D11Device, context: &'a ID3D11DeviceContext) -> Self {
         Self { device, context }
     }
 }
 
-/// Owned D3D11 texture paired with a wgpu texture imported via shared handle.
+/// Shared D3D11 texture and its wgpu import of the same resource.
 pub struct VtD3d11Bridge {
+    /// D3D11 texture with `D3D11_RESOURCE_MISC_SHARED`.
     pub d3d11: ID3D11Texture2D,
+    /// wgpu texture created via DX12 shared handle (same memory as `d3d11`).
     pub wgpu: Texture,
 }
 
 impl VtD3d11Bridge {
+    /// Creates a new shared D3D11 texture and imports it into wgpu.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::BridgeError::NotFoundDxBackend`] if wgpu is not on DX12.
     pub fn new(
         d3d: &VtD3d11Device<'_>,
         wgpu_device: &Device,
@@ -75,6 +95,7 @@ impl VtD3d11Bridge {
         Ok(Self { d3d11, wgpu })
     }
 
+    /// GPU copy from `src` into this bridge's D3D11 texture (visible to wgpu after import).
     pub fn copy_from(
         &self,
         d3d: &VtD3d11Device<'_>,
@@ -89,6 +110,7 @@ impl VtD3d11Bridge {
         Ok(())
     }
 
+    /// GPU copy from this bridge's D3D11 texture into `dst`.
     pub fn copy_to(
         &self,
         d3d: &VtD3d11Device<'_>,
@@ -104,7 +126,10 @@ impl VtD3d11Bridge {
     }
 }
 
-/// Reused D3D11 bridges keyed by dimensions/format/usage.
+/// Cache of [`VtD3d11Bridge`] instances keyed by size, DXGI format, and wgpu usage.
+///
+/// Used internally by [`crate::VTSampler`] for [`crate::VTImage::from_d3d11`]; you may also
+/// use it directly to avoid recreating shared textures every frame.
 pub struct VtD3d11Pool {
     entries: Mutex<HashMap<PoolKey, Arc<VtD3d11Bridge>>>,
 }
@@ -118,12 +143,14 @@ struct PoolKey {
 }
 
 impl VtD3d11Pool {
+    /// Creates an empty pool.
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
         }
     }
 
+    /// Returns an existing bridge or creates one for the given parameters.
     pub fn acquire(
         &self,
         d3d: &VtD3d11Device<'_>,
@@ -152,6 +179,9 @@ impl VtD3d11Pool {
     }
 }
 
+/// Maps a [`VTFormat`] to DXGI and wgpu texture formats for bridge creation.
+///
+/// [`VTFormat::YUV420P`] is not supported on D3D11 bridges.
 pub fn vt_format_to_dxgi_wgpu(format: VTFormat) -> Result<(DXGI_FORMAT, TextureFormat), BridgeError> {
     match format {
         VTFormat::RGBA => Ok((DXGI_FORMAT_R8G8B8A8_UNORM, TextureFormat::Rgba8Unorm)),
@@ -161,6 +191,7 @@ pub fn vt_format_to_dxgi_wgpu(format: VTFormat) -> Result<(DXGI_FORMAT, TextureF
     }
 }
 
+/// Reads `DXGI_FORMAT` from an existing D3D11 texture descriptor.
 pub fn dxgi_from_texture(texture: &ID3D11Texture2D) -> DXGI_FORMAT {
     let mut desc = D3D11_TEXTURE2D_DESC::default();
     unsafe {
@@ -225,7 +256,9 @@ fn import_d3d11_shared(
     }
 }
 
-/// Import an existing shared D3D11 texture into wgpu (no copy).
+/// Imports an **existing** shared D3D11 texture into wgpu (no `CopySubresourceRegion`).
+///
+/// The texture must already have been created with `D3D11_RESOURCE_MISC_SHARED`.
 pub fn import_d3d11_texture(
     wgpu_device: &Device,
     d3d11: &ID3D11Texture2D,

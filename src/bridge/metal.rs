@@ -1,4 +1,7 @@
-//! CVPixelBuffer → Metal → wgpu import and plane upload.
+//! `CVPixelBuffer` → Metal → wgpu upload.
+//!
+//! Requires a wgpu device on the **Metal** backend. Used by [`crate::VTImage::from_cv_pixel_buffer`]
+//! and available directly via [`VtMetalCache`].
 
 use std::ptr::{NonNull, null_mut};
 use std::sync::{Arc, Mutex};
@@ -24,14 +27,22 @@ use wgpu::{
 
 use crate::{VTFormat, bridge::BridgeError, gpu::plane_size};
 
+/// Opaque Core Video pixel buffer handle (`CVPixelBuffer *`).
 pub type CVPixelBufferRef = *mut CVPixelBuffer;
 
+/// Maps `CVPixelBuffer` planes to Metal textures and copies into wgpu.
 pub struct VtMetalCache {
     cache: Retained<CVMetalTextureCache>,
     wgpu_device: Arc<Device>,
 }
 
 impl VtMetalCache {
+    /// Creates a texture cache tied to the same Metal device as `wgpu_device`.
+    ///
+    /// # Errors
+    ///
+    /// * [`crate::BridgeError::NotFoundMetalBackend`] — wgpu is not using Metal.
+    /// * [`crate::BridgeError::CoreVideo`] — `CVMetalTextureCacheCreate` failed.
     pub fn new(wgpu_device: Arc<Device>) -> Result<Self, BridgeError> {
         let mut raw_mtl = None;
         wgpu_device.as_hal::<Metal, _, _>(|device| {
@@ -64,13 +75,16 @@ impl VtMetalCache {
         })
     }
 
+    /// Flushes the Core Video metal texture cache (call after batched uploads if needed).
     pub fn flush(&self) {
         unsafe {
             CVMetalTextureCacheFlush(&self.cache, 0);
         }
     }
 
-    /// Upload pixel buffer contents into wgpu plane textures (via Metal interop + copy).
+    /// Copies pixel buffer contents into `dst_planes` within `encoder`.
+    ///
+    /// Plane count and formats must match `format` (1 plane for RGBA/BGRA, 2 for NV12).
     pub fn upload_to_planes(
         &self,
         encoder: &mut CommandEncoder,
@@ -219,6 +233,7 @@ impl VtMetalCache {
     }
 }
 
+/// Maps a `kCVPixelFormatType_*` constant to [`VTFormat`].
 pub fn cv_pixel_format_to_vt(pixel_format: u32) -> Result<VTFormat, BridgeError> {
     match pixel_format {
         kCVPixelFormatType_32RGBA => Ok(VTFormat::RGBA),
@@ -229,6 +244,7 @@ pub fn cv_pixel_format_to_vt(pixel_format: u32) -> Result<VTFormat, BridgeError>
     }
 }
 
+/// Returns `(width, height)` of a pixel buffer.
 pub fn cv_pixel_buffer_size(buffer: CVPixelBufferRef) -> (u32, u32) {
     (
         unsafe { CVPixelBufferGetWidth(&*buffer) } as u32,

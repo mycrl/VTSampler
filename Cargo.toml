@@ -1,12 +1,20 @@
 [package]
 name = "vtsampler"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
-description = "A pure Rust implementation similar to ID3D11VideoProcessor"
+description = "Cross-platform GPU video format conversion and scaling (wgpu compute)"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/mycrl/VTSampler"
 homepage = "https://github.com/mycrl/VTSampler"
+documentation = "https://docs.rs/vtsampler"
+keywords = ["video", "wgpu", "gpu", "yuv", "nv12", "color-conversion", "scaling"]
+categories = ["graphics", "multimedia::video"]
+
+[package.metadata.docs.rs]
+all-features = false
+default-target = "x86_64-pc-windows-msvc"
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 wgpu = "23"

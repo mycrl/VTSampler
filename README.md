@@ -1,32 +1,41 @@
 # VTSampler
 
-A pure Rust implementation similar to ID3D11VideoProcessor, but cross-platform and cross-graphics API, with all tasks executed on the GPU, which is very fast!
-> ID3D11VideoProcessor is an implementation that handles tasks such as color space conversion and texture scaling, specifically designed for video stream-related tasks.
+Cross-platform **GPU video format conversion and scaling** on [wgpu](https://docs.rs/wgpu). One [`VTImage`](https://docs.rs/vtsampler/latest/vtsampler/struct.VTImage.html) in, one out — similar in spirit to D3D11 Video Processor, but portable.
 
----
+**API reference:** [docs.rs/vtsampler](https://docs.rs/vtsampler) · Local: `cargo doc --open --no-deps`
 
-> Since it is still under development, it is not currently available on crates.io, but it is already usable.
+## Features
 
-This library currently supports conversion between RGBA, BGRA, NV12, and YUV420P, and also supports texture scaling.
+- **Formats:** RGBA, BGRA, NV12, YUV420P (any → any)
+- **Scaling** when input/output sizes differ
+- **Color:** BT.601 / BT.709 limited range
+- **Backings:** CPU, wgpu textures, D3D11 (Windows), `CVPixelBuffer` (macOS)
 
-However, there are currently some limitations, such as the color space being fixed (BT.601) and the scaling sampling mode being Nearest, which is the simplest sampling implementation. Additionally, it only supports copying from CPU to GPU and does not support writing back from GPU to CPU.
-
-These limitations are related to the current simple implementation of the shader generator. Future plans include developing a more feature-rich shader generator.
-
-Furthermore, future plans also include supporting native textures from certain graphics APIs, such as ID3D11Texture2D, MTLTexture, and CVPixelBuffer, allowing these texture types to be used directly without manual conversion to wgpu Texture.
-
-## Example
+## Quick example
 
 ```rust
 use vtsampler::{PixelData, VTFormat, VTImage, VTProcessOptions, VTSamplerBuilder};
 
+# async fn run() -> Result<(), vtsampler::VTSampleError> {
 let mut sampler = VTSamplerBuilder::default().build().await?;
 
 let input = VTImage::from_cpu(&pixel_data, 1920, 1080);
 let output = VTImage::from_render_target(&gpu_texture, VTFormat::BGRA);
 
 sampler.process(&input, &output, VTProcessOptions::default())?;
+# Ok(())
+# }
 ```
+
+Share your renderer's device with [`VTSamplerBuilder::with_arc_device`](https://docs.rs/vtsampler/latest/vtsampler/struct.VTSamplerBuilder.html#method.with_arc_device).
+
+## Example program
+
+```sh
+cargo run --example simple
+```
+
+Requires `ffmpeg` on `PATH` (downloads a sample image).
 
 ## License
 

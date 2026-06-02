@@ -68,7 +68,31 @@ async fn global_instance() -> Result<&'static GlobalInstance, VTSampleError> {
     Ok(GLOBAL.get().unwrap())
 }
 
-/// Builds a [`VTSampler`] on a shared or external GPU device.
+/// Configures how a [`VTSampler`] obtains its [`wgpu::Device`] and [`wgpu::Queue`].
+///
+/// # Examples
+///
+/// **Headless device** (tools, tests):
+///
+/// ```no_run
+/// # async fn demo() -> Result<(), vtsampler::VTSampleError> {
+/// let _sampler = vtsampler::VTSamplerBuilder::default().build().await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// **Shared with an existing renderer** (recommended for apps):
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// # async fn demo(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Result<(), vtsampler::VTSampleError> {
+/// let _sampler = vtsampler::VTSamplerBuilder::default()
+///     .with_arc_device(device, queue)
+///     .build()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Default)]
 pub struct VTSamplerBuilder {
     device: Option<Arc<Device>>,
@@ -76,13 +100,20 @@ pub struct VTSamplerBuilder {
 }
 
 impl VTSamplerBuilder {
-    /// Use an existing wgpu device (typically shared with the application renderer).
+    /// Uses your application's wgpu device instead of creating a global headless instance.
+    ///
+    /// # Notes
+    ///
+    /// * `device` and `queue` must belong to the same adapter.
+    /// * On Windows, use a **DX12** backend for [`crate::VtD3d11Bridge`].
+    /// * On macOS, use **Metal** for `VtMetalCache` and `VTImage::from_cv_pixel_buffer`.
     pub fn with_arc_device(mut self, device: Arc<Device>, queue: Arc<Queue>) -> Self {
         self.device = Some(device);
         self.queue = Some(queue);
         self
     }
 
+    /// Creates a [`VTSampler`] (async due to wgpu adapter/device initialization).
     pub async fn build(self) -> Result<VTSampler, VTSampleError> {
         let (device, queue) = if let (Some(d), Some(q)) = (self.device, self.queue) {
             (d, q)
@@ -104,7 +135,16 @@ impl VTSamplerBuilder {
     }
 }
 
-/// GPU video convert + scale engine (one input image → one output image per call).
+/// GPU engine for video **format conversion** and **scaling**.
+///
+/// One [`VTImage`] input and one [`VTImage`] output per call. Compute pipelines are generated
+/// from Minijinja templates and cached by [`crate::PipelineKey`]. A scratch pool reuses
+/// intermediate textures across calls with the same dimensions.
+///
+/// # Thread safety
+///
+/// Prefer one `VTSampler` per thread, or wrap it in `Arc<Mutex<VTSampler>>` if shared.
+/// Native bridge pools use internal locking.
 pub struct VTSampler {
     device: Arc<Device>,
     queue: Arc<Queue>,
@@ -117,18 +157,24 @@ pub struct VTSampler {
 }
 
 impl VTSampler {
+    /// The wgpu device used for shaders, allocation, and processing.
     pub fn device(&self) -> &Device {
         &self.device
     }
 
+    /// The queue used when [`Self::process`] submits command buffers.
     pub fn queue(&self) -> &Queue {
         &self.queue
     }
 
+    /// Allocates GPU textures suitable as conversion intermediates (`STORAGE_BINDING` / `COPY_DST`).
     pub fn allocate(&self, format: VTFormat, width: u32, height: u32) -> VTImageOwned {
         crate::pool::ScratchPool::allocate_owned(&self.device, format, width, height)
     }
 
+    /// Converts / scales `input` → `output` and **submits** work to the GPU queue.
+    ///
+    /// To record into your own command buffer (e.g. combined with rendering), use [`Self::encode`].
     pub fn process(
         &mut self,
         input: &VTImage<'_>,
@@ -145,6 +191,9 @@ impl VTSampler {
         Ok(())
     }
 
+    /// Records the conversion pass into `encoder` without submitting.
+    ///
+    /// Submit the encoder (with any other passes) via your own [`wgpu::Queue::submit`] call.
     pub fn encode(
         &mut self,
         input: &VTImage<'_>,

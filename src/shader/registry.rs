@@ -12,12 +12,21 @@ use crate::{
     shader::{compile_wgsl, create_shader_module},
 };
 
+/// Identifies a cached compute pipeline (input/output format, scale, color matrix, filter).
+///
+/// Exposed for debugging or custom tooling; [`crate::VTSampler`] builds keys automatically
+/// from [`crate::VTImage`] dimensions and [`crate::VTProcessOptions`].
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub struct PipelineKey {
+    /// Source pixel format.
     pub input: VTFormat,
+    /// Destination pixel format.
     pub output: VTFormat,
+    /// `true` when input and output widths/heights differ.
     pub need_scale: bool,
+    /// YUV ↔ RGB matrix variant.
     pub color_space: VTColorSpace,
+    /// Resampling filter when `need_scale` is true.
     pub scale_filter: VTScaleFilter,
 }
 
