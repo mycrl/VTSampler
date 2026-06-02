@@ -2,6 +2,11 @@
 name = "vtsampler"
 version = "0.1.0"
 edition = "2024"
+description = "A pure Rust implementation similar to ID3D11VideoProcessor"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/mycrl/VTSampler"
+homepage = "https://github.com/mycrl/VTSampler"
 
 [dependencies]
 wgpu = "23"
