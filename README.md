@@ -2,8 +2,6 @@
 
 Cross-platform **GPU video format conversion and scaling** on [wgpu](https://docs.rs/wgpu). One [`VTImage`](https://docs.rs/vtsampler/latest/vtsampler/struct.VTImage.html) in, one out — similar in spirit to D3D11 Video Processor, but portable.
 
-**API reference:** [docs.rs/vtsampler](https://docs.rs/vtsampler) · Local: `cargo doc --open --no-deps`
-
 ## Features
 
 - **Formats:** RGBA, BGRA, NV12, YUV420P (any → any)
