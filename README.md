@@ -14,15 +14,15 @@ Cross-platform **GPU video format conversion and scaling** on [wgpu](https://doc
 ```rust
 use vtsampler::{PixelData, VTFormat, VTImage, VTProcessOptions, VTSamplerBuilder};
 
-# async fn run() -> Result<(), vtsampler::VTSampleError> {
-let mut sampler = VTSamplerBuilder::default().build().await?;
+async fn run() -> Result<(), vtsampler::VTSampleError> {
+    let mut sampler = VTSamplerBuilder::default().build().await?;
 
-let input = VTImage::from_cpu(&pixel_data, 1920, 1080);
-let output = VTImage::from_render_target(&gpu_texture, VTFormat::BGRA);
+    let input = VTImage::from_cpu(&pixel_data, 1920, 1080);
+    let output = VTImage::from_render_target(&gpu_texture, VTFormat::BGRA);
 
-sampler.process(&input, &output, VTProcessOptions::default())?;
-# Ok(())
-# }
+    sampler.process(&input, &output, VTProcessOptions::default())?;
+    Ok(())
+}
 ```
 
 Share your renderer's device with [`VTSamplerBuilder::with_arc_device`](https://docs.rs/vtsampler/latest/vtsampler/struct.VTSamplerBuilder.html#method.with_arc_device).
